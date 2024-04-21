@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 )
 
 type Coordinates struct {
@@ -13,9 +14,7 @@ type Coordinates struct {
 }
 
 var (
-	// Protects access to the coordinates
-	mutex sync.RWMutex
-	// Holds the latest coordinates
+	mutex            sync.RWMutex
 	latestCoordinates Coordinates
 )
 
@@ -26,14 +25,13 @@ func coordinatesHandler(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		postCoordinates(w, r)
 	default:
-		http.Error(w, "Method is not supported.", http.StatusMethodNotAllowed)
+		http.Error(w, "Method not supported", http.StatusMethodNotAllowed)
 	}
 }
 
 func postCoordinates(w http.ResponseWriter, r *http.Request) {
 	var coords Coordinates
-	err := json.NewDecoder(r.Body).Decode(&coords)
-	if err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&coords); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -42,24 +40,37 @@ func postCoordinates(w http.ResponseWriter, r *http.Request) {
 	latestCoordinates = coords
 	mutex.Unlock()
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode("Coordinates received")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Coordinates received"})
 }
 
 func getCoordinates(w http.ResponseWriter, r *http.Request) {
 	mutex.RLock()
-	coords := latestCoordinates
-	mutex.RUnlock()
+	defer mutex.RUnlock()
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(coords)
+	json.NewEncoder(w).Encode(latestCoordinates)
+}
+
+func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
 }
 
 func main() {
-	http.HandleFunc("/api/coordinates", coordinatesHandler)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/coordinates", coordinatesHandler)
+	mux.HandleFunc("/health", healthCheckHandler)
 
-	log.Println("Starting server on port 8080")
-	if err := http.ListenAndServe(":8080", nil); err != nil {
+	server := &http.Server{
+		Addr:         ":8080",
+		Handler:      mux,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  15 * time.Second,
+	}
+
+	log.Println("Server starting on port 8080")
+	if err := server.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }
